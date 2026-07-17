@@ -1,16 +1,15 @@
 // ── Main App Controller ──
 (() => {
-  let currentParsed = null;
+  let currentParsed        = null;
+  let currentMonthlyData   = null;
   let currentMonthlyBridge = null;
-  let monthlyParsedWeeks = []; // holds all parsed weekly data for monthly
 
   // ── Tab Navigation ──
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(t => {
-        t.classList.remove('active');
-        t.classList.add('hidden');
+        t.classList.remove('active'); t.classList.add('hidden');
       });
       btn.classList.add('active');
       const tab = document.getElementById('tab-' + btn.dataset.tab);
@@ -20,15 +19,14 @@
     });
   });
 
-  // ── WEEKLY: File Upload ──
-  const weeklyDropZone = document.getElementById('weekly-drop-zone');
+  // ── WEEKLY: Upload ──
+  const weeklyDropZone  = document.getElementById('weekly-drop-zone');
   const weeklyFileInput = document.getElementById('weekly-file-input');
 
   weeklyDropZone.addEventListener('dragover', e => { e.preventDefault(); weeklyDropZone.classList.add('dragover'); });
   weeklyDropZone.addEventListener('dragleave', () => weeklyDropZone.classList.remove('dragover'));
   weeklyDropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    weeklyDropZone.classList.remove('dragover');
+    e.preventDefault(); weeklyDropZone.classList.remove('dragover');
     handleWeeklyFile(e.dataTransfer.files[0]);
   });
   weeklyDropZone.addEventListener('click', () => weeklyFileInput.click());
@@ -39,8 +37,13 @@
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        currentParsed = Parser.parse(e.target.result);
-        renderWeeklySummary(currentParsed);
+        const parsed = Parser.parse(e.target.result);
+        if (parsed.fileType === 'monthly') {
+          showFeedback('weekly-feedback', 'error', 'This looks like a monthly file. Please use the Monthly Bridge tab.');
+          return;
+        }
+        currentParsed = parsed;
+        renderWeeklySummary(parsed);
       } catch (err) {
         showFeedback('weekly-feedback', 'error', 'Failed to parse file: ' + err.message);
       }
@@ -48,14 +51,13 @@
     reader.readAsArrayBuffer(file);
   }
 
-  // ── WEEKLY: Render Summary ──
+  // ── WEEKLY: Render ──
   function renderWeeklySummary(data) {
     document.getElementById('weekly-summary').classList.remove('hidden');
     document.getElementById('weekly-title').textContent = `DEA ${data.weekLabel} Summary`;
     document.getElementById('weekly-week-badge').textContent = data.weekKey;
 
-    const statsEl = document.getElementById('weekly-stats');
-    statsEl.innerHTML = `
+    document.getElementById('weekly-stats').innerHTML = `
       <div class="stat-box"><div class="stat-value">${data.totalBPS} bps</div><div class="stat-label">Total DEA BPS</div></div>
       <div class="stat-box"><div class="stat-value">${data.deaVolume.toLocaleString()}</div><div class="stat-label">DEA Volume (units)</div></div>
       <div class="stat-box"><div class="stat-value">${data.totalMisses.toLocaleString()}</div><div class="stat-label">Impacting Units</div></div>
@@ -82,16 +84,22 @@
       const block = document.createElement('div');
       block.className = 'rc-block';
       block.innerHTML = `
-        <h4>RC${rcIdx+1}: ${name} <span style="font-weight:400;color:#888;">(${d.bps} bps / ${d.units.toLocaleString()} units)</span></h4>
-        <p class="rc-sub">Enter root cause per day. Leave blank to skip that day in the output.</p>
+        <h4>RC${rcIdx+1}: ${name}
+          <span style="font-weight:400;color:#888;">
+            (${d.bps} bps / ${d.units.toLocaleString()} units)
+          </span>
+        </h4>
+        <p class="rc-sub">Enter root cause per day. Leave blank to skip that day.</p>
       `;
       data.dayLabels.forEach((day, i) => {
-        const units = d.unitsByDay && d.unitsByDay[i] > 0 ? ` – ${d.unitsByDay[i].toLocaleString()} units` : '';
+        const units = d.unitsByDay && d.unitsByDay[i] > 0
+          ? ` – ${d.unitsByDay[i].toLocaleString()} units` : '';
         const row = document.createElement('div');
         row.className = 'day-rc-row';
         row.innerHTML = `
           <div class="day-label">${day}${units}</div>
-          <textarea data-rc="${name}" data-day="${i}" rows="2" placeholder="Root cause (optional)..."></textarea>
+          <textarea data-rc="${name}" data-day="${i}" rows="2"
+            placeholder="Root cause (optional)..."></textarea>
         `;
         block.appendChild(row);
       });
@@ -103,35 +111,28 @@
     const rc = {};
     document.querySelectorAll('[data-rc]').forEach(el => {
       const name = el.dataset.rc;
-      const day = el.dataset.day;
+      const day  = el.dataset.day;
       if (!rc[name]) rc[name] = {};
       rc[name][day] = el.value.trim();
     });
     return rc;
   }
 
-  // ── WEEKLY: Save ──
   document.getElementById('weekly-save-btn').addEventListener('click', async () => {
     if (!currentParsed) return;
     const bridge = BridgeGenerator.buildWeekly(
-      currentParsed,
-      collectWeeklyRC(),
+      currentParsed, collectWeeklyRC(),
       document.getElementById('weekly-action-plan').value
     );
     const ok = await Storage.save(bridge);
-    if (ok) {
-      showFeedback('weekly-feedback', 'success', `✅ ${bridge.weekLabel} saved successfully!`);
-    } else {
-      showFeedback('weekly-feedback', 'error', 'Failed to save. Check your connection.');
-    }
+    showFeedback('weekly-feedback', ok ? 'success' : 'error',
+      ok ? `✅ ${bridge.weekLabel} saved!` : 'Failed to save. Check your connection.');
   });
 
-  // ── WEEKLY: Export ──
   document.getElementById('weekly-export-btn').addEventListener('click', async () => {
     if (!currentParsed) return;
     const bridge = BridgeGenerator.buildWeekly(
-      currentParsed,
-      collectWeeklyRC(),
+      currentParsed, collectWeeklyRC(),
       document.getElementById('weekly-action-plan').value
     );
     try {
@@ -142,88 +143,111 @@
     }
   });
 
-  // ── MONTHLY: Multi-file Upload ──
-  const monthlyDropZone = document.getElementById('monthly-drop-zone');
+  // ── MONTHLY: Upload ──
+  const monthlyDropZone  = document.getElementById('monthly-drop-zone');
   const monthlyFileInput = document.getElementById('monthly-file-input');
 
   monthlyDropZone.addEventListener('dragover', e => { e.preventDefault(); monthlyDropZone.classList.add('dragover'); });
   monthlyDropZone.addEventListener('dragleave', () => monthlyDropZone.classList.remove('dragover'));
   monthlyDropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    monthlyDropZone.classList.remove('dragover');
-    handleMonthlyFiles(e.dataTransfer.files);
+    e.preventDefault(); monthlyDropZone.classList.remove('dragover');
+    handleMonthlyFile(e.dataTransfer.files[0]);
   });
   monthlyDropZone.addEventListener('click', () => monthlyFileInput.click());
-  monthlyFileInput.addEventListener('change', () => handleMonthlyFiles(monthlyFileInput.files));
+  monthlyFileInput.addEventListener('change', () => handleMonthlyFile(monthlyFileInput.files[0]));
 
-  function handleMonthlyFiles(files) {
-    if (!files || files.length < 2) {
-      showFeedback('monthly-feedback', 'error', 'Please upload at least 2 weekly Excel files.');
-      return;
-    }
-    if (files.length > 6) {
-      showFeedback('monthly-feedback', 'error', 'Maximum 6 weekly files at once.');
-      return;
-    }
-
-    monthlyParsedWeeks = [];
-    let loaded = 0;
-    const total = files.length;
-    const results = new Array(total);
-
-    Array.from(files).forEach((file, idx) => {
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
-          results[idx] = Parser.parse(e.target.result);
-        } catch (err) {
-          results[idx] = null;
-          console.error('Failed to parse:', file.name, err);
+  function handleMonthlyFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const parsed = Parser.parse(e.target.result);
+        if (parsed.fileType !== 'monthly') {
+          showFeedback('monthly-feedback', 'error',
+            'This looks like a weekly file. Please use the Weekly Bridge tab.');
+          return;
         }
-        loaded++;
-        if (loaded === total) {
-          monthlyParsedWeeks = results
-            .filter(Boolean)
-            .sort((a, b) => a.weekKey > b.weekKey ? 1 : -1);
-
-          if (monthlyParsedWeeks.length < 2) {
-            showFeedback('monthly-feedback', 'error', 'Could not parse enough valid files. Please check your Excel files.');
-            return;
-          }
-          renderMonthlyFilesLoaded(monthlyParsedWeeks);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    });
+        currentMonthlyData = parsed;
+        populateWeekSelectors(parsed.availableWeeks);
+        document.getElementById('monthly-range-section').classList.remove('hidden');
+        document.getElementById('monthly-preview-section').classList.add('hidden');
+        showFeedback('monthly-feedback', 'success',
+          `✅ File loaded! Found ${parsed.availableWeeks.length} weeks: ${parsed.availableWeeks.join(', ')}`);
+      } catch (err) {
+        showFeedback('monthly-feedback', 'error', 'Failed to parse file: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   }
 
-  function renderMonthlyFilesLoaded(weeks) {
-    // Show file chips
-    const chipsContainer = document.getElementById('monthly-files-chips');
-    chipsContainer.innerHTML = '';
+  function populateWeekSelectors(weeks) {
+    const fromSel = document.getElementById('monthly-week-from');
+    const toSel   = document.getElementById('monthly-week-to');
+    fromSel.innerHTML = '';
+    toSel.innerHTML   = '';
     weeks.forEach(w => {
-      const chip = document.createElement('div');
-      chip.className = 'week-chip selected';
-      chip.textContent = `${w.weekLabel} · ${w.totalBPS} bps`;
-      chipsContainer.appendChild(chip);
+      fromSel.innerHTML += `<option value="${w}">${w}</option>`;
+      toSel.innerHTML   += `<option value="${w}">${w}</option>`;
     });
-    document.getElementById('monthly-files-list').classList.remove('hidden');
+    fromSel.selectedIndex = 0;
+    toSel.selectedIndex   = weeks.length - 1;
+  }
 
-    // Compile and show stats
-    const compiled = BridgeGenerator.compileMonthlyStats(weeks);
+  document.getElementById('monthly-apply-range-btn').addEventListener('click', async () => {
+    if (!currentMonthlyData) return;
 
-    const statsEl = document.getElementById('monthly-stats');
-    statsEl.innerHTML = `
-      <div class="stat-box"><div class="stat-value">${compiled.totalBPSAvg} bps</div><div class="stat-label">Avg DEA BPS</div></div>
-      <div class="stat-box"><div class="stat-value">${compiled.totalVolume.toLocaleString()}</div><div class="stat-label">Total Volume (units)</div></div>
-      <div class="stat-box"><div class="stat-value">${compiled.totalMissesSum.toLocaleString()}</div><div class="stat-label">Total Impacting Units</div></div>
-      <div class="stat-box"><div class="stat-value">${weeks.length}</div><div class="stat-label">Weeks Included</div></div>
+    const fromKey = document.getElementById('monthly-week-from').value;
+    const toKey   = document.getElementById('monthly-week-to').value;
+
+    if (fromKey > toKey) {
+      showFeedback('monthly-feedback', 'error', '"From" week must be before "To" week.');
+      return;
+    }
+
+    const selectedWeeks = currentMonthlyData.weeksData.filter(w =>
+      w.weekKey >= fromKey && w.weekKey <= toKey
+    );
+
+    if (selectedWeeks.length < 2) {
+      showFeedback('monthly-feedback', 'error', 'Please select a range of at least 2 weeks.');
+      return;
+    }
+
+    // Fetch all saved bridges to auto-fill RC
+    const savedBridges = await Storage.getAll();
+    renderMonthlyPreview(selectedWeeks, savedBridges);
+  });
+
+  // ── MONTHLY: Render Preview with auto-filled RC ──
+  async function renderMonthlyPreview(selectedWeeks, savedBridges) {
+    const compiled = BridgeGenerator.compileMonthlyStats(selectedWeeks);
+
+    // Stats row
+    document.getElementById('monthly-stats').innerHTML = `
+      <div class="stat-box">
+        <div class="stat-value">${compiled.totalBPSAvg} bps</div>
+        <div class="stat-label">Avg DEA BPS</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${compiled.totalVolume.toLocaleString()}</div>
+        <div class="stat-label">Total Volume (units)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${compiled.totalMissesSum.toLocaleString()}</div>
+        <div class="stat-label">Total Impacting Units</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${selectedWeeks.length}</div>
+        <div class="stat-label">Weeks Included</div>
+      </div>
     `;
 
+    // Bucket table
     const tbody = document.getElementById('monthly-bucket-body');
     tbody.innerHTML = '';
     compiled.sortedBuckets.forEach(([name, d], i) => {
-      const pct = compiled.totalMissesSum > 0 ? ((d.units / compiled.totalMissesSum) * 100).toFixed(1) : '0';
+      const pct = compiled.totalMissesSum > 0
+        ? ((d.units / compiled.totalMissesSum) * 100).toFixed(1) : '0';
       const topBadge = i < 2 ? `<span class="top-badge">RC${i+1}</span>` : '';
       tbody.innerHTML += `
         <tr>
@@ -234,59 +258,95 @@
           <td>${pct}%</td>
         </tr>`;
     });
-    document.getElementById('monthly-stats-preview').classList.remove('hidden');
 
-    // Auto fill label
-    const label = document.getElementById('monthly-label');
-    if (!label.value) {
-      label.value = `${weeks[0].weekLabel} to ${weeks[weeks.length-1].weekLabel}`;
+    // Auto label
+    const labelEl = document.getElementById('monthly-label');
+    if (!labelEl.value) {
+      labelEl.value =
+        `${selectedWeeks[0].weekLabel} to ${selectedWeeks[selectedWeeks.length-1].weekLabel}`;
     }
 
-    // Build RC entry blocks per week for top 2 buckets
-    renderMonthlyRC(weeks, compiled.sortedBuckets);
+    // Auto-fill RC from saved bridges
+    const autoRC = BridgeGenerator.autoFillMonthlyRC(
+      selectedWeeks, compiled.sortedBuckets, savedBridges
+    );
 
-    // Show generate button
-    document.getElementById('monthly-generate-btn').classList.remove('hidden');
-  }
-
-  function renderMonthlyRC(weeks, sortedBuckets) {
+    // Build RC blocks
     const rcSection = document.getElementById('monthly-rc-section');
     rcSection.innerHTML = '';
 
-    sortedBuckets.slice(0, 2).forEach(([name, d], rcIdx) => {
+    compiled.sortedBuckets.slice(0, 2).forEach(([name, d], rcIdx) => {
       const block = document.createElement('div');
       block.className = 'rc-block';
+
+      // Find highest impacting week for this bucket
+      let highestWeek = null;
+      let highestBps  = -1;
+      selectedWeeks.forEach(week => {
+        const wb = week.sortedBuckets.find(([n]) => n === name);
+        if (wb && wb[1].bps > highestBps) {
+          highestBps  = wb[1].bps;
+          highestWeek = week.weekLabel;
+        }
+      });
+
       block.innerHTML = `
-        <h4>RC${rcIdx+1}: ${name} <span style="font-weight:400;color:#888;">(avg ${d.bps} bps / ${d.units.toLocaleString()} total units)</span></h4>
-        <p class="rc-sub">Enter root cause per week. Leave blank to skip that week in the output.</p>
+        <h4>RC${rcIdx+1}: ${name}
+          <span style="font-weight:400;color:#888;">
+            (avg ${d.bps} bps / ${d.units.toLocaleString()} total units)
+          </span>
+        </h4>
+        <p class="rc-sub">
+          Auto-filled from saved weekly bridges where available.
+          Highest impacting week: <strong>${highestWeek || 'N/A'}</strong>.
+          Edit any field as needed or leave blank to omit.
+        </p>
       `;
-      weeks.forEach(week => {
-        const weekBucket = week.sortedBuckets.find(([n]) => n === name);
-        const weekUnits = weekBucket ? weekBucket[1].units.toLocaleString() : '0';
-        const weekBps   = weekBucket ? weekBucket[1].bps : 0;
+
+      selectedWeeks.forEach(week => {
+        const wb     = week.sortedBuckets.find(([n]) => n === name);
+        const wUnits = wb ? wb[1].units.toLocaleString() : '0';
+        const wBps   = wb ? wb[1].bps : 0;
+
+        // Check if we have saved RC for this week
+        const savedText   = (autoRC[name] && autoRC[name][week.weekKey]) || '';
+        const hasSaved    = savedText.trim().length > 0;
+        const isHighlight = week.weekLabel === highestWeek;
+
         const row = document.createElement('div');
         row.className = 'week-rc-row';
+
         row.innerHTML = `
-          <label>${week.weekLabel} – ${weekUnits} units (${weekBps} bps)</label>
-          <textarea data-monthly-rc="${name}" data-week="${week.weekKey}" rows="3"
-            placeholder="Root cause for ${week.weekLabel} (optional)..."></textarea>
+          <label>
+            ${isHighlight ? '⭐ ' : ''}${week.weekLabel}
+            – ${wUnits} units (${wBps} bps)
+            ${hasSaved ? '<span class="auto-filled-badge">auto-filled</span>' : ''}
+          </label>
+          <textarea
+            data-monthly-rc="${name}"
+            data-week="${week.weekKey}"
+            rows="3"
+            placeholder="Root cause for ${week.weekLabel} (optional)..."
+          >${savedText}</textarea>
         `;
         block.appendChild(row);
       });
+
       rcSection.appendChild(block);
     });
+
+    // Store selected weeks
+    currentMonthlyData._selectedWeeks = selectedWeeks;
+
+    document.getElementById('monthly-preview-section').classList.remove('hidden');
+    document.getElementById('monthly-generate-btn').classList.remove('hidden');
   }
 
   // ── MONTHLY: Generate ──
-  document.getElementById('monthly-generate-btn').addEventListener('click', async () => {
-    if (!monthlyParsedWeeks.length) {
-      showFeedback('monthly-feedback', 'error', 'Please upload weekly Excel files first.');
-      return;
-    }
+  document.getElementById('monthly-generate-btn').addEventListener('click', () => {
+    if (!currentMonthlyData || !currentMonthlyData._selectedWeeks) return;
 
-    const label = document.getElementById('monthly-label').value.trim()
-      || `${monthlyParsedWeeks[0].weekLabel} to ${monthlyParsedWeeks[monthlyParsedWeeks.length-1].weekLabel}`;
-
+    const label = document.getElementById('monthly-label').value.trim();
     const rcData = {};
     document.querySelectorAll('[data-monthly-rc]').forEach(el => {
       const name = el.dataset.monthlyRc;
@@ -297,11 +357,12 @@
 
     const actionPlan = document.getElementById('monthly-action-plan').value;
     currentMonthlyBridge = BridgeGenerator.buildMonthly(
-      monthlyParsedWeeks, label, rcData, actionPlan
+      currentMonthlyData._selectedWeeks, label, rcData, actionPlan
     );
 
     document.getElementById('monthly-export-btn').classList.remove('hidden');
-    showFeedback('monthly-feedback', 'success', '✅ Monthly bridge ready! Click Export Word to download.');
+    showFeedback('monthly-feedback', 'success',
+      '✅ Monthly bridge ready! Click Export Word to download.');
   });
 
   // ── MONTHLY: Export ──
@@ -315,28 +376,33 @@
     }
   });
 
-  // ── SAVED: Render List ──
+  // ── SAVED: Render ──
   async function renderSavedList() {
     const container = document.getElementById('saved-list');
-    container.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading saved bridges...</p></div>';
+    container.innerHTML =
+      '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
     const all = await Storage.getAll();
     if (!all.length) {
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><p>No saved bridges yet. Upload an Excel file in the Weekly tab to get started.</p></div>`;
+      container.innerHTML =
+        `<div class="empty-state"><div class="empty-icon">📭</div>
+         <p>No saved bridges yet. Upload an Excel in the Weekly tab to get started.</p></div>`;
       return;
     }
     container.innerHTML = '';
     all.forEach(bridge => {
-      const card = document.createElement('div');
+      const card  = document.createElement('div');
       card.className = 'saved-card';
-      const saved = new Date(bridge.savedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+      const saved = new Date(bridge.savedAt).toLocaleDateString('en-GB',
+        { day:'numeric', month:'short', year:'numeric' });
       card.innerHTML = `
         <div class="saved-card-info">
           <h4>DEA ${bridge.weekLabel}</h4>
-          <p>${bridge.totalBPS} bps &nbsp;|&nbsp; ${bridge.deaVolume.toLocaleString()} units &nbsp;|&nbsp; Saved ${saved}</p>
+          <p>${bridge.totalBPS} bps &nbsp;|&nbsp; ${bridge.deaVolume.toLocaleString()} units
+             &nbsp;|&nbsp; Saved ${saved}</p>
         </div>
         <div class="saved-card-actions">
           <button class="btn-secondary" data-export="${bridge.weekKey}">📄 Re-export</button>
-          <button class="btn-danger" data-delete="${bridge.weekKey}">🗑 Delete</button>
+          <button class="btn-danger"    data-delete="${bridge.weekKey}">🗑 Delete</button>
         </div>`;
       container.appendChild(card);
     });
@@ -349,7 +415,7 @@
     });
     container.querySelectorAll('[data-delete]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (confirm(`Delete ${btn.dataset.delete}? This cannot be undone.`)) {
+        if (confirm(`Delete ${btn.dataset.delete}?`)) {
           await Storage.remove(btn.dataset.delete);
           renderSavedList();
         }
@@ -357,12 +423,12 @@
     });
   }
 
-  // ── Feedback Helper ──
+  // ── Feedback ──
   function showFeedback(id, type, msg) {
     const el = document.getElementById(id);
     el.textContent = msg;
-    el.className = `feedback ${type}`;
+    el.className   = `feedback ${type}`;
     el.classList.remove('hidden');
-    setTimeout(() => el.classList.add('hidden'), 5000);
+    setTimeout(() => el.classList.add('hidden'), 6000);
   }
 })();
