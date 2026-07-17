@@ -1,4 +1,4 @@
-// ── Bridge Generator (compiles data for display + export) ──
+// ── Bridge Generator ──
 const BridgeGenerator = (() => {
 
   function buildWeekly(parsed, rcData, actionPlan) {
@@ -11,33 +11,30 @@ const BridgeGenerator = (() => {
       totalMisses: parsed.totalMisses,
       dayLabels: parsed.dayLabels,
       sortedBuckets: parsed.sortedBuckets,
-      rcData,      // { bucketName: { dayIndex: 'text', ... }, ... }
+      rcData,
       actionPlan,
       savedAt: new Date().toISOString(),
     };
   }
 
-  function buildMonthly(selectedBridges, label, rcData, actionPlan) {
-    if (!selectedBridges.length) return null;
-
-    // Aggregate: sum units, average BPS weighted by volume
+  function compileMonthlyStats(parsedWeeks) {
     const bucketAgg = {};
     let totalVolume = 0;
     let totalMissesSum = 0;
 
-    for (const bridge of selectedBridges) {
-      totalVolume += bridge.deaVolume;
-      totalMissesSum += bridge.totalMisses;
-      for (const [name, data] of bridge.sortedBuckets) {
+    for (const week of parsedWeeks) {
+      totalVolume += week.deaVolume;
+      totalMissesSum += week.totalMisses;
+      for (const [name, data] of week.sortedBuckets) {
         if (!bucketAgg[name]) bucketAgg[name] = { unitsSum: 0, bpsSum: 0, count: 0 };
         bucketAgg[name].unitsSum += data.units;
-        bucketAgg[name].bpsSum += data.bps;
-        bucketAgg[name].count += 1;
+        bucketAgg[name].bpsSum  += data.bps;
+        bucketAgg[name].count   += 1;
       }
     }
 
     const totalBPSAvg = Math.round(
-      selectedBridges.reduce((s,b) => s + b.totalBPS, 0) / selectedBridges.length
+      parsedWeeks.reduce((s, b) => s + b.totalBPS, 0) / parsedWeeks.length
     );
 
     const sortedBuckets = Object.entries(bucketAgg)
@@ -45,24 +42,23 @@ const BridgeGenerator = (() => {
         units: agg.unitsSum,
         bps: Math.round(agg.bpsSum / agg.count),
       }])
-      .sort((a,b) => b[1].bps - a[1].bps || b[1].units - a[1].units);
+      .sort((a, b) => b[1].bps - a[1].bps || b[1].units - a[1].units);
 
-    const weekLabels = selectedBridges.map(b => b.weekLabel);
-    const weekKeys   = selectedBridges.map(b => b.weekKey);
+    return { totalVolume, totalMissesSum, totalBPSAvg, sortedBuckets };
+  }
 
+  function buildMonthly(parsedWeeks, label, rcData, actionPlan) {
+    const compiled = compileMonthlyStats(parsedWeeks);
     return {
       type: 'monthly',
       label,
-      weekLabels,
-      weekKeys,
-      totalVolume,
-      totalMissesSum,
-      totalBPSAvg,
-      sortedBuckets,
-      rcData,      // { bucketName: { weekKey: 'text', ... }, ... }
+      weekLabels: parsedWeeks.map(w => w.weekLabel),
+      weekKeys:   parsedWeeks.map(w => w.weekKey),
+      ...compiled,
+      rcData,
       actionPlan,
     };
   }
 
-  return { buildWeekly, buildMonthly };
+  return { buildWeekly, compileMonthlyStats, buildMonthly };
 })();
