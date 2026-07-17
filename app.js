@@ -281,7 +281,7 @@
       selectedWeeks, compiled.sortedBuckets, savedBridges
     );
 
-    // Build RC blocks - sorted by highest BPS descending for each bucket
+    // Build RC blocks
     const rcSection = document.getElementById('monthly-rc-section');
     rcSection.innerHTML = '';
 
@@ -289,16 +289,15 @@
       const block = document.createElement('div');
       block.className = 'rc-block';
 
-      // Find highest impacting week for this bucket
-      let highestWeek = null;
-      let highestBps  = -1;
-      selectedWeeks.forEach(week => {
-        const wb = week.sortedBuckets.find(([n]) => n === name);
-        if (wb && wb[1].bps > highestBps) {
-          highestBps  = wb[1].bps;
-          highestWeek = week.weekLabel;
-        }
+      // Sort weeks by BPS for THIS bucket descending
+      const sortedWeeks = [...selectedWeeks].sort((a, b) => {
+        const aBps = (a.sortedBuckets.find(([n]) => n === name) || [null, { bps: 0 }])[1].bps;
+        const bBps = (b.sortedBuckets.find(([n]) => n === name) || [null, { bps: 0 }])[1].bps;
+        return bBps - aBps;
       });
+
+      // Highest impacting week is always first after sort
+      const highestWeek = sortedWeeks[0] ? sortedWeeks[0].weekLabel : 'N/A';
 
       block.innerHTML = `
         <h4>RC${rcIdx+1}: ${name}
@@ -308,17 +307,10 @@
         </h4>
         <p class="rc-sub">
           Ordered by highest impact first.
-          Highest impacting week: <strong>${highestWeek || 'N/A'}</strong>.
+          Highest impacting week: <strong>${highestWeek}</strong>.
           Auto-filled from saved bridges where available. Edit as needed.
         </p>
       `;
-
-      // Sort weeks by BPS for THIS bucket descending
-      const sortedWeeks = [...selectedWeeks].sort((a, b) => {
-        const aBps = (a.sortedBuckets.find(([n]) => n === name) || [, { bps: 0 }])[1].bps;
-        const bBps = (b.sortedBuckets.find(([n]) => n === name) || [, { bps: 0 }])[1].bps;
-        return bBps - aBps;
-      });
 
       sortedWeeks.forEach(week => {
         const wb        = week.sortedBuckets.find(([n]) => n === name);
@@ -339,6 +331,7 @@
           <textarea
             data-monthly-rc="${name}"
             data-week="${week.weekKey}"
+            data-rc-idx="${rcIdx}"
             rows="3"
             placeholder="Root cause for ${week.weekLabel} (optional)..."
           >${savedText}</textarea>
@@ -358,11 +351,22 @@
   document.getElementById('monthly-generate-btn').addEventListener('click', () => {
     if (!currentMonthlyData || !currentMonthlyData._selectedWeeks) return;
 
-    const label = document.getElementById('monthly-label').value.trim();
+    const label  = document.getElementById('monthly-label').value.trim();
     const rcData = {};
-    document.querySelectorAll('[data-monthly-rc]').forEach(el => {
-      const name = el.dataset.monthlyRc;
-      const week = el.dataset.week;
+
+    // Collect RC entries using data-rc-idx to avoid duplicate bucket names
+    // across RC1 and RC2 blocks - last write wins per weekKey per bucket
+    const seen = {};
+    document.querySelectorAll('textarea[data-monthly-rc]').forEach(el => {
+      const name   = el.dataset.monthlyRc;
+      const week   = el.dataset.week;
+      const rcIdx  = el.dataset.rcIdx;
+      const key    = `${rcIdx}-${name}-${week}`;
+
+      // Skip if we already collected this exact entry
+      if (seen[key]) return;
+      seen[key] = true;
+
       if (!rcData[name]) rcData[name] = {};
       rcData[name][week] = el.value.trim();
     });
