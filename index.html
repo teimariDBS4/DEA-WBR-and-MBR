@@ -5,11 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>DEA Bridge Generator</title>
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
 </head>
 <body>
   <div id="app">
+
     <!-- Header -->
     <header>
       <div class="header-inner">
@@ -78,6 +77,7 @@
           </div>
           <div id="weekly-feedback" class="feedback hidden"></div>
         </div>
+
       </div>
     </div>
 
@@ -113,6 +113,7 @@
           <div id="monthly-preview" class="monthly-preview hidden"></div>
           <div id="monthly-feedback" class="feedback hidden"></div>
         </div>
+
       </div>
     </div>
 
@@ -123,12 +124,17 @@
         <div id="saved-list" class="saved-list"></div>
       </div>
     </div>
+
   </div>
 
+  <!-- Scripts loaded in correct order at bottom of body -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
   <script src="storage.js"></script>
   <script src="parser.js"></script>
   <script src="bridge-generator.js"></script>
   <script src="docx-export.js"></script>
   <script src="app.js"></script>
+
 </body>
 </html>
