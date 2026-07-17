@@ -3,13 +3,13 @@ const BridgeGenerator = (() => {
 
   function buildWeekly(parsed, rcData, actionPlan) {
     return {
-      type: 'weekly',
-      weekKey: parsed.weekKey,
-      weekLabel: parsed.weekLabel,
-      deaVolume: parsed.deaVolume,
-      totalBPS: parsed.totalBPS,
-      totalMisses: parsed.totalMisses,
-      dayLabels: parsed.dayLabels,
+      type:          'weekly',
+      weekKey:       parsed.weekKey,
+      weekLabel:     parsed.weekLabel,
+      deaVolume:     parsed.deaVolume,
+      totalBPS:      parsed.totalBPS,
+      totalMisses:   parsed.totalMisses,
+      dayLabels:     parsed.dayLabels,
       sortedBuckets: parsed.sortedBuckets,
       rcData,
       actionPlan,
@@ -19,7 +19,7 @@ const BridgeGenerator = (() => {
 
   function compileMonthlyStats(weeksData) {
     const bucketAgg = {};
-    let totalVolume = 0;
+    let totalVolume    = 0;
     let totalMissesSum = 0;
 
     for (const week of weeksData) {
@@ -47,39 +47,41 @@ const BridgeGenerator = (() => {
     return { totalVolume, totalMissesSum, totalBPSAvg, sortedBuckets };
   }
 
-  // ── NEW: Auto-generate RC text for top 2 buckets ──
-  // For each top bucket, find the highest impacting week from saved bridges
-  // and pull the RC text already entered in that weekly bridge.
+  // ── Build per-week bucket lookup for exporter ──
+  // { weekKey: { _weekLabel: 'W27 2026', 'Late Dispatch': { bps: 33, units: 1342 }, ... } }
+  function buildPerWeekBucketData(weeksData) {
+    const lookup = {};
+    weeksData.forEach(week => {
+      lookup[week.weekKey] = { _weekLabel: week.weekLabel };
+      week.sortedBuckets.forEach(([name, data]) => {
+        lookup[week.weekKey][name] = { bps: data.bps, units: data.units };
+      });
+    });
+    return lookup;
+  }
+
+  // ── Auto-fill monthly RC from saved weekly bridges ──
   function autoFillMonthlyRC(selectedWeeks, sortedBuckets, savedBridges) {
     const rcData = {};
 
-    const top2 = sortedBuckets.slice(0, 2);
-
-    top2.forEach(([bucketName]) => {
+    sortedBuckets.slice(0, 2).forEach(([bucketName]) => {
       rcData[bucketName] = {};
 
       selectedWeeks.forEach(week => {
-        // Try to find a saved weekly bridge for this week
         const saved = savedBridges.find(b => b.weekKey === week.weekKey);
 
         if (saved && saved.rcData && saved.rcData[bucketName]) {
-          // Collect all non-empty day entries from the saved weekly RC
           const dayEntries = Object.entries(saved.rcData[bucketName])
             .filter(([, text]) => text && text.trim())
             .map(([dayIdx, text]) => {
-              // Try to get the day label e.g. "MON-06-JUL"
               const dayLabel = saved.dayLabels && saved.dayLabels[dayIdx]
                 ? saved.dayLabels[dayIdx]
                 : `Day ${parseInt(dayIdx) + 1}`;
               return `${dayLabel}: ${text.trim()}`;
             });
 
-          if (dayEntries.length) {
-            // Join all day entries for this week into one block
-            rcData[bucketName][week.weekKey] = dayEntries.join('\n');
-          } else {
-            rcData[bucketName][week.weekKey] = '';
-          }
+          rcData[bucketName][week.weekKey] = dayEntries.length
+            ? dayEntries.join('\n') : '';
         } else {
           rcData[bucketName][week.weekKey] = '';
         }
@@ -91,11 +93,16 @@ const BridgeGenerator = (() => {
 
   function buildMonthly(weeksData, label, rcData, actionPlan) {
     const compiled = compileMonthlyStats(weeksData);
+
+    // Build per-week lookup so exporter knows exact BPS/units per bucket per week
+    const perWeekBucketData = buildPerWeekBucketData(weeksData);
+
     return {
-      type: 'monthly',
+      type:            'monthly',
       label,
-      weekLabels: weeksData.map(w => w.weekLabel),
-      weekKeys:   weeksData.map(w => w.weekKey),
+      weekLabels:      weeksData.map(w => w.weekLabel),
+      weekKeys:        weeksData.map(w => w.weekKey),
+      perWeekBucketData,
       ...compiled,
       rcData,
       actionPlan,
