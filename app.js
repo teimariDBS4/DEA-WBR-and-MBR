@@ -91,38 +91,66 @@
 
     const rcSection = document.getElementById('weekly-rc-section');
     rcSection.innerHTML = '';
+
     data.sortedBuckets.slice(0, 2).forEach(([name, d], rcIdx) => {
       const block = document.createElement('div');
       block.className = 'rc-block';
+
+      // Build day entries sorted by units descending
+      const dayEntries = data.dayLabels.map((day, i) => ({
+        idx:   i,
+        label: day,
+        units: d.unitsByDay && d.unitsByDay[i] ? d.unitsByDay[i] : 0,
+      })).sort((a, b) => b.units - a.units);
+
+      // Highest impacting day is first after sort
+      const highestDay = dayEntries[0] && dayEntries[0].units > 0
+        ? dayEntries[0].label : null;
+
       block.innerHTML = `
         <h4>RC${rcIdx+1}: ${name}
           <span style="font-weight:400;color:#888;">
             (${d.bps} bps / ${d.units.toLocaleString()} units)
           </span>
         </h4>
-        <p class="rc-sub">Enter root cause per day. Leave blank to skip that day.</p>
+        <p class="rc-sub">
+          Ordered by highest impact first.
+          ${highestDay ? `Highest impacting day: <strong>${highestDay}</strong>.` : ''}
+          Leave blank to skip that day.
+        </p>
       `;
-      data.dayLabels.forEach((day, i) => {
-        const units = d.unitsByDay && d.unitsByDay[i] > 0
-          ? ` – ${d.unitsByDay[i].toLocaleString()} units` : '';
-        const row = document.createElement('div');
-        row.className = 'day-rc-row';
-        row.innerHTML = `
-          <div class="day-label">${day}${units}</div>
-          <textarea data-rc="${name}" data-day="${i}" rows="2"
+
+      dayEntries.forEach(({ idx, label, units }) => {
+        const unitsStr  = units > 0 ? ` – ${units.toLocaleString()} units` : '';
+        const isHighest = label === highestDay;
+        const row       = document.createElement('div');
+        row.className   = 'day-rc-row';
+        row.innerHTML   = `
+          <div class="day-label">${isHighest ? '⭐ ' : ''}${label}${unitsStr}</div>
+          <textarea
+            data-rc="${name}"
+            data-day="${idx}"
+            data-rc-idx="${rcIdx}"
+            rows="2"
             placeholder="Root cause (optional)..."></textarea>
         `;
         block.appendChild(row);
       });
+
       rcSection.appendChild(block);
     });
   }
 
   function collectWeeklyRC() {
-    const rc = {};
-    document.querySelectorAll('[data-rc]').forEach(el => {
-      const name = el.dataset.rc;
-      const day  = el.dataset.day;
+    const rc   = {};
+    const seen = {};
+    document.querySelectorAll('textarea[data-rc]').forEach(el => {
+      const name  = el.dataset.rc;
+      const day   = el.dataset.day;
+      const rcIdx = el.dataset.rcIdx;
+      const key   = `${rcIdx}-${name}-${day}`;
+      if (seen[key]) return;
+      seen[key] = true;
       if (!rc[name]) rc[name] = {};
       rc[name][day] = el.value.trim();
     });
@@ -232,7 +260,6 @@
   async function renderMonthlyPreview(selectedWeeks, savedBridges) {
     const compiled = BridgeGenerator.compileMonthlyStats(selectedWeeks);
 
-    // Stats
     document.getElementById('monthly-stats').innerHTML = `
       <div class="stat-box">
         <div class="stat-value">${compiled.totalBPSAvg} bps</div>
@@ -252,7 +279,6 @@
       </div>
     `;
 
-    // Bucket table
     const tbody = document.getElementById('monthly-bucket-body');
     tbody.innerHTML = '';
     compiled.sortedBuckets.forEach(([name, d], i) => {
@@ -269,19 +295,16 @@
         </tr>`;
     });
 
-    // Auto label
     const labelEl = document.getElementById('monthly-label');
     if (!labelEl.value) {
       labelEl.value =
         `${selectedWeeks[0].weekLabel} to ${selectedWeeks[selectedWeeks.length-1].weekLabel}`;
     }
 
-    // Auto-fill RC from saved bridges
     const autoRC = BridgeGenerator.autoFillMonthlyRC(
       selectedWeeks, compiled.sortedBuckets, savedBridges
     );
 
-    // Build RC blocks
     const rcSection = document.getElementById('monthly-rc-section');
     rcSection.innerHTML = '';
 
@@ -296,7 +319,6 @@
         return bBps - aBps;
       });
 
-      // Highest impacting week is always first after sort
       const highestWeek = sortedWeeks[0] ? sortedWeeks[0].weekLabel : 'N/A';
 
       block.innerHTML = `
@@ -353,20 +375,15 @@
 
     const label  = document.getElementById('monthly-label').value.trim();
     const rcData = {};
+    const seen   = {};
 
-    // Collect RC entries using data-rc-idx to avoid duplicate bucket names
-    // across RC1 and RC2 blocks - last write wins per weekKey per bucket
-    const seen = {};
     document.querySelectorAll('textarea[data-monthly-rc]').forEach(el => {
-      const name   = el.dataset.monthlyRc;
-      const week   = el.dataset.week;
-      const rcIdx  = el.dataset.rcIdx;
-      const key    = `${rcIdx}-${name}-${week}`;
-
-      // Skip if we already collected this exact entry
+      const name  = el.dataset.monthlyRc;
+      const week  = el.dataset.week;
+      const rcIdx = el.dataset.rcIdx;
+      const key   = `${rcIdx}-${name}-${week}`;
       if (seen[key]) return;
       seen[key] = true;
-
       if (!rcData[name]) rcData[name] = {};
       rcData[name][week] = el.value.trim();
     });
