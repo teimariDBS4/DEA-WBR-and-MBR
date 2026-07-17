@@ -18,12 +18,11 @@ const Parser = (() => {
   }
 
   function detectWeekNumber(rows) {
-    // Look for a header row containing week label like "2026-W28"
     for (const row of rows) {
       for (const cell of row) {
         const s = String(cell || '');
         const m = s.match(/(\d{4})-W(\d{1,2})/);
-        if (m) return { year: m[1], week: m[2].padStart(2,'0') };
+        if (m) return { year: m[1], week: m[2].padStart(2,'0'), full: s.trim() };
       }
     }
     return null;
@@ -31,11 +30,10 @@ const Parser = (() => {
 
   function findRowByLabel(rows, label) {
     for (const row of rows) {
-      const first = String(row[0] || row[1] || '').trim();
-      if (first.toLowerCase().includes(label.toLowerCase())) return row;
-      // also check second cell
-      const second = String(row[1] || '').trim();
-      if (second.toLowerCase().includes(label.toLowerCase())) return row;
+      for (let i = 0; i < Math.min(3, row.length); i++) {
+        const cell = String(row[i] || '').trim();
+        if (cell.toLowerCase().includes(label.toLowerCase())) return row;
+      }
     }
     return null;
   }
@@ -50,18 +48,52 @@ const Parser = (() => {
     return null;
   }
 
-  // Returns column indices for Sun-Sat + Total WXX
-  function detectDayColumns(rows) {
+  function detectDayColumns(rows, weekKey) {
+    // weekKey is e.g. "2026-W28" - we want the Total column for THIS week specifically
     const DAYS = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+
     for (const row of rows) {
       const dayIndices = [];
       let totalIdx = -1;
+
       row.forEach((cell, i) => {
-        const s = String(cell || '').toUpperCase();
-        if (DAYS.some(d => s.includes(d))) dayIndices.push({ idx: i, label: s.split('-').slice(0,2).join('-') });
-        if (s.includes('TOTAL') && s.includes('W') && !s.includes('WOW')) totalIdx = i;
+        const s = String(cell || '').toUpperCase().trim();
+
+        // Match day columns
+        if (DAYS.some(d => s.startsWith(d))) {
+          dayIndices.push({ idx: i, label: s });
+        }
+
+        // Match the CURRENT week total column specifically e.g. "Total 2026-W28"
+        if (weekKey && s.includes('TOTAL') && s.includes(weekKey.toUpperCase())) {
+          totalIdx = i;
+        }
       });
-      if (dayIndices.length === 7) return { dayIndices, totalIdx };
+
+      if (dayIndices.length === 7 && totalIdx >= 0) {
+        return { dayIndices, totalIdx };
+      }
+
+      // Fallback: if we found 7 days but no week-specific total yet,
+      // keep looking but store day indices
+      if (dayIndices.length === 7 && totalIdx === -1) {
+        // Try to find total in same row by position (first Total after SAT)
+        let foundDays = false;
+        for (let i = 0; i < row.length; i++) {
+          const s = String(row[i] || '').toUpperCase().trim();
+          if (DAYS.some(d => s.startsWith(d))) foundDays = true;
+          if (foundDays && s.includes('TOTAL') && !s.includes('WOW')) {
+            // Check if this is the current week total
+            if (weekKey && s.includes(weekKey.toUpperCase())) {
+              totalIdx = i;
+              break;
+            } else if (!weekKey && totalIdx === -1) {
+              totalIdx = i; // fallback if no weekKey
+            }
+          }
+        }
+        if (totalIdx >= 0) return { dayIndices, totalIdx };
+      }
     }
     return null;
   }
@@ -71,9 +103,14 @@ const Parser = (() => {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
+    // Step 1: detect week first
     const weekInfo = detectWeekNumber(raw);
-    const cols = detectDayColumns(raw);
+    if (!weekInfo) throw new Error('Could not detect week number in file. Please check the file format.');
 
+    const weekKey = `${weekInfo.year}-W${weekInfo.week}`;
+
+    // Step 2: detect columns using weekKey to find the RIGHT total column
+    const cols = detectDayColumns(raw, weekKey);
     if (!cols) throw new Error('Could not detect day columns. Please check the file format.');
 
     const { dayIndices, totalIdx } = cols;
@@ -90,47 +127,68 @@ const Parser = (() => {
     const row11 = findRowByLabel(raw, 'DEA Volume');
     const vol = extractRow(row11);
 
-    // 1.4 Last Mile BPS
-    const row14 = findRowByLabel(raw, 'Last Mile (bps) [Int PDD]');
+    // 1.4 Last Mile BPS - must be exact match to avoid picking up 1.5
+    let row14 = null;
+    for (const row of raw) {
+      for (let i = 0; i < Math.min(3, row.length); i++) {
+        const cell = String(row[i] || '').trim();
+        if (cell === '1.4' || cell.startsWith('1.4\t') ||
+            (cell.toLowerCase().includes('last mile (bps)') &&
+             cell.toLowerCase().includes('int pdd') &&
+             !cell.toLowerCase().includes('drilldown') &&
+             !cell.toLowerCase().includes('ds drill'))) {
+          row14 = row;
+          break;
+        }
+      }
+      if (row14) break;
+    }
+
+    // Fallback label search if exact match failed
+    if (!row14) row14 = findRowByLabel(raw, 'Last Mile (bps) [Int PDD]');
+
     const bpsTotal = row14 && totalIdx >= 0 ? parseNum(row14[totalIdx]) : 0;
-    const bpsDays = row14 ? dayIndices.map(d => parseNum(row14[d.idx])) : [];
+    const bpsDays  = row14 ? dayIndices.map(d => parseNum(row14[d.idx])) : [];
 
     // Section 4: DEA Misses per bucket
     const buckets = {};
     for (const [name, keys] of Object.entries(BUCKET_MAP)) {
       const row4 = findRowByPrefix(raw, keys.section4);
       const row2 = findRowByPrefix(raw, keys.section2);
-      const miss = extractRow(row4);
+      const miss  = extractRow(row4);
       const bpsRow = extractRow(row2);
       if (miss) {
         buckets[name] = {
-          units: miss.total,
+          units:      miss.total,
           unitsByDay: miss.days,
-          bps: bpsRow ? bpsRow.total : 0,
-          bpsByDay: bpsRow ? bpsRow.days : [],
+          bps:        bpsRow ? bpsRow.total : 0,
+          bpsByDay:   bpsRow ? bpsRow.days  : [],
         };
       }
     }
 
-    // Sort descending by BPS
+    // Sort descending by BPS then units
     const sortedBuckets = Object.entries(buckets)
       .filter(([,v]) => v.bps > 0 || v.units > 0)
       .sort((a,b) => b[1].bps - a[1].bps || b[1].units - a[1].units);
 
     const totalMisses = sortedBuckets.reduce((s,[,v]) => s + v.units, 0);
 
+    // Format day labels nicely e.g. "SUN-05-JUL"
+    const dayLabels = dayIndices.map(d => d.label);
+
     return {
-      weekKey: weekInfo ? `${weekInfo.year}-W${weekInfo.week}` : `W-unknown`,
-      weekLabel: weekInfo ? `W${weekInfo.week} ${weekInfo.year}` : 'Unknown Week',
-      year: weekInfo?.year || '',
-      week: weekInfo?.week || '',
-      deaVolume: vol ? vol.total : 0,
-      deaVolByDay: vol ? vol.days : [],
-      totalBPS: bpsTotal,
-      bpsByDay: bpsDays,
+      weekKey,
+      weekLabel:    `W${weekInfo.week} ${weekInfo.year}`,
+      year:         weekInfo.year,
+      week:         weekInfo.week,
+      deaVolume:    vol ? vol.total : 0,
+      deaVolByDay:  vol ? vol.days  : [],
+      totalBPS:     bpsTotal,
+      bpsByDay:     bpsDays,
       totalMisses,
-      dayLabels: dayIndices.map(d => d.label),
-      sortedBuckets, // [[name, {units, bps, unitsByDay, bpsByDay}], ...]
+      dayLabels,
+      sortedBuckets,
     };
   }
 
