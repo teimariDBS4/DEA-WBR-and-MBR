@@ -1,4 +1,4 @@
-// ── Excel Parser ──
+// ── Excel Parser (handles both daily weekly and multi-week monthly formats) ──
 const Parser = (() => {
 
   const BUCKET_MAP = {
@@ -14,18 +14,7 @@ const Parser = (() => {
   function parseNum(val) {
     if (val === null || val === undefined || val === '-' || val === '') return 0;
     if (typeof val === 'number') return val;
-    return parseFloat(String(val).replace(/,/g, '')) || 0;
-  }
-
-  function detectWeekNumber(rows) {
-    for (const row of rows) {
-      for (const cell of row) {
-        const s = String(cell || '');
-        const m = s.match(/(\d{4})-W(\d{1,2})/);
-        if (m) return { year: m[1], week: m[2].padStart(2,'0'), full: s.trim() };
-      }
-    }
-    return null;
+    return parseFloat(String(val).replace(/,/g, '').replace(/%/g, '')) || 0;
   }
 
   function findRowByLabel(rows, label) {
@@ -48,148 +37,207 @@ const Parser = (() => {
     return null;
   }
 
-  function detectDayColumns(rows, weekKey) {
-    // weekKey is e.g. "2026-W28" - we want the Total column for THIS week specifically
+  // ── Detect file type: weekly (daily columns) or monthly (week columns) ──
+  function detectFileType(rows) {
     const DAYS = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
-
     for (const row of rows) {
-      const dayIndices = [];
-      let totalIdx = -1;
-
-      row.forEach((cell, i) => {
+      let dayCount = 0;
+      let weekCount = 0;
+      row.forEach(cell => {
         const s = String(cell || '').toUpperCase().trim();
-
-        // Match day columns
-        if (DAYS.some(d => s.startsWith(d))) {
-          dayIndices.push({ idx: i, label: s });
-        }
-
-        // Match the CURRENT week total column specifically e.g. "Total 2026-W28"
-        if (weekKey && s.includes('TOTAL') && s.includes(weekKey.toUpperCase())) {
-          totalIdx = i;
-        }
+        if (DAYS.some(d => s.startsWith(d))) dayCount++;
+        if (s.match(/^\d{4}-W\d{1,2}$/)) weekCount++;
       });
-
-      if (dayIndices.length === 7 && totalIdx >= 0) {
-        return { dayIndices, totalIdx };
-      }
-
-      // Fallback: if we found 7 days but no week-specific total yet,
-      // keep looking but store day indices
-      if (dayIndices.length === 7 && totalIdx === -1) {
-        // Try to find total in same row by position (first Total after SAT)
-        let foundDays = false;
-        for (let i = 0; i < row.length; i++) {
-          const s = String(row[i] || '').toUpperCase().trim();
-          if (DAYS.some(d => s.startsWith(d))) foundDays = true;
-          if (foundDays && s.includes('TOTAL') && !s.includes('WOW')) {
-            // Check if this is the current week total
-            if (weekKey && s.includes(weekKey.toUpperCase())) {
-              totalIdx = i;
-              break;
-            } else if (!weekKey && totalIdx === -1) {
-              totalIdx = i; // fallback if no weekKey
-            }
-          }
-        }
-        if (totalIdx >= 0) return { dayIndices, totalIdx };
-      }
+      if (dayCount >= 7) return 'weekly';
+      if (weekCount >= 2) return 'monthly';
     }
-    return null;
+    return 'weekly'; // default
   }
 
-  function parse(arrayBuffer) {
-    const wb = XLSX.read(arrayBuffer, { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  // ── Parse WEEKLY file (daily columns Sun-Sat) ──
+  function parseWeekly(rows) {
+    const DAYS = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
 
-    // Step 1: detect week first
-    const weekInfo = detectWeekNumber(raw);
-    if (!weekInfo) throw new Error('Could not detect week number in file. Please check the file format.');
+    // Detect week number
+    let weekInfo = null;
+    for (const row of rows) {
+      for (const cell of row) {
+        const s = String(cell || '').trim();
+        const m = s.match(/(\d{4})-W(\d{1,2})/);
+        if (m) { weekInfo = { year: m[1], week: m[2].padStart(2,'0'), full: s }; break; }
+      }
+      if (weekInfo) break;
+    }
+    if (!weekInfo) throw new Error('Could not detect week number.');
 
     const weekKey = `${weekInfo.year}-W${weekInfo.week}`;
 
-    // Step 2: detect columns using weekKey to find the RIGHT total column
-    const cols = detectDayColumns(raw, weekKey);
-    if (!cols) throw new Error('Could not detect day columns. Please check the file format.');
+    // Find header row with day columns
+    let dayIndices = [];
+    let totalIdx = -1;
+    for (const row of rows) {
+      const found = [];
+      let tIdx = -1;
+      row.forEach((cell, i) => {
+        const s = String(cell || '').toUpperCase().trim();
+        if (DAYS.some(d => s.startsWith(d))) found.push({ idx: i, label: s });
+        if (s.includes('TOTAL') && s.includes(weekKey.toUpperCase()) && !s.includes('WOW')) tIdx = i;
+      });
+      if (found.length === 7 && tIdx >= 0) { dayIndices = found; totalIdx = tIdx; break; }
+    }
+    if (!dayIndices.length) throw new Error('Could not detect day columns.');
 
-    const { dayIndices, totalIdx } = cols;
-
-    // Helper: extract daily values + total from a row
     function extractRow(row) {
       if (!row) return null;
       const days = dayIndices.map(d => parseNum(row[d.idx]));
-      const total = totalIdx >= 0 ? parseNum(row[totalIdx]) : days.reduce((a,b) => a+b, 0);
+      const total = totalIdx >= 0 ? parseNum(row[totalIdx]) : days.reduce((a,b)=>a+b,0);
       return { days, total };
     }
 
-    // 1.1 DEA Volume
-    const row11 = findRowByLabel(raw, 'DEA Volume');
+    const row11 = findRowByLabel(rows, 'DEA Volume');
     const vol = extractRow(row11);
 
-    // 1.4 Last Mile BPS - must be exact match to avoid picking up 1.5
+    // Find 1.4 specifically (not 1.5 drilldown)
     let row14 = null;
-    for (const row of raw) {
+    for (const row of rows) {
       for (let i = 0; i < Math.min(3, row.length); i++) {
-        const cell = String(row[i] || '').trim();
-        if (cell === '1.4' || cell.startsWith('1.4\t') ||
-            (cell.toLowerCase().includes('last mile (bps)') &&
-             cell.toLowerCase().includes('int pdd') &&
-             !cell.toLowerCase().includes('drilldown') &&
-             !cell.toLowerCase().includes('ds drill'))) {
-          row14 = row;
-          break;
+        const cell = String(row[i] || '').trim().toLowerCase();
+        if (cell.includes('last mile (bps)') && cell.includes('int pdd') &&
+            !cell.includes('drilldown') && !cell.includes('ds drill')) {
+          row14 = row; break;
         }
       }
       if (row14) break;
     }
 
-    // Fallback label search if exact match failed
-    if (!row14) row14 = findRowByLabel(raw, 'Last Mile (bps) [Int PDD]');
-
     const bpsTotal = row14 && totalIdx >= 0 ? parseNum(row14[totalIdx]) : 0;
     const bpsDays  = row14 ? dayIndices.map(d => parseNum(row14[d.idx])) : [];
 
-    // Section 4: DEA Misses per bucket
     const buckets = {};
     for (const [name, keys] of Object.entries(BUCKET_MAP)) {
-      const row4 = findRowByPrefix(raw, keys.section4);
-      const row2 = findRowByPrefix(raw, keys.section2);
+      const row4 = findRowByPrefix(rows, keys.section4);
+      const row2 = findRowByPrefix(rows, keys.section2);
       const miss  = extractRow(row4);
       const bpsRow = extractRow(row2);
       if (miss) {
         buckets[name] = {
-          units:      miss.total,
-          unitsByDay: miss.days,
-          bps:        bpsRow ? bpsRow.total : 0,
-          bpsByDay:   bpsRow ? bpsRow.days  : [],
+          units: miss.total, unitsByDay: miss.days,
+          bps: bpsRow ? bpsRow.total : 0, bpsByDay: bpsRow ? bpsRow.days : [],
         };
       }
     }
 
-    // Sort descending by BPS then units
     const sortedBuckets = Object.entries(buckets)
       .filter(([,v]) => v.bps > 0 || v.units > 0)
       .sort((a,b) => b[1].bps - a[1].bps || b[1].units - a[1].units);
 
-    const totalMisses = sortedBuckets.reduce((s,[,v]) => s + v.units, 0);
-
-    // Format day labels nicely e.g. "SUN-05-JUL"
-    const dayLabels = dayIndices.map(d => d.label);
-
     return {
+      fileType: 'weekly',
       weekKey,
-      weekLabel:    `W${weekInfo.week} ${weekInfo.year}`,
-      year:         weekInfo.year,
-      week:         weekInfo.week,
-      deaVolume:    vol ? vol.total : 0,
-      deaVolByDay:  vol ? vol.days  : [],
-      totalBPS:     bpsTotal,
-      bpsByDay:     bpsDays,
-      totalMisses,
-      dayLabels,
+      weekLabel: `W${weekInfo.week} ${weekInfo.year}`,
+      year: weekInfo.year,
+      week: weekInfo.week,
+      deaVolume: vol ? vol.total : 0,
+      deaVolByDay: vol ? vol.days : [],
+      totalBPS: bpsTotal,
+      bpsByDay: bpsDays,
+      totalMisses: sortedBuckets.reduce((s,[,v]) => s + v.units, 0),
+      dayLabels: dayIndices.map(d => d.label),
       sortedBuckets,
     };
+  }
+
+  // ── Parse MONTHLY file (week columns e.g. 2026-W24, 2026-W25...) ──
+  function parseMonthly(rows) {
+    // Find the header row containing week keys like 2026-W24
+    let weekCols = [];   // [{weekKey, colIdx}, ...]
+    let labelColIdx = 0; // column with row labels
+
+    for (const row of rows) {
+      const found = [];
+      row.forEach((cell, i) => {
+        const s = String(cell || '').trim();
+        const m = s.match(/(\d{4})-W(\d{1,2})/);
+        if (m) found.push({ weekKey: s.trim(), colIdx: i });
+      });
+      if (found.length >= 2) {
+        weekCols = found;
+        // Label column is first non-empty column before first week col
+        labelColIdx = found[0].colIdx > 0 ? 0 : 0;
+        break;
+      }
+    }
+
+    if (!weekCols.length) throw new Error('Could not detect week columns in monthly file.');
+
+    // Helper: extract value for a specific week column from a row
+    function getVal(row, colIdx) {
+      return row ? parseNum(row[colIdx]) : 0;
+    }
+
+    // Find data rows
+    const row11 = findRowByLabel(rows, 'DEA Volume');
+    const row14rows = [];
+    for (const row of rows) {
+      for (let i = 0; i < Math.min(3, row.length); i++) {
+        const cell = String(row[i] || '').trim().toLowerCase();
+        if (cell.includes('last mile (bps)') && cell.includes('int pdd') &&
+            !cell.includes('drilldown') && !cell.includes('ds drill')) {
+          row14rows.push(row); break;
+        }
+      }
+    }
+    const row14 = row14rows[0] || null;
+
+    // Build per-week data
+    const weeksData = weekCols.map(({ weekKey, colIdx }) => {
+      const m = weekKey.match(/(\d{4})-W(\d{1,2})/);
+      const weekLabel = m ? `W${m[2].padStart(2,'0')} ${m[1]}` : weekKey;
+
+      const deaVolume = row11 ? getVal(row11, colIdx) : 0;
+      const totalBPS  = row14 ? getVal(row14, colIdx) : 0;
+
+      const buckets = {};
+      for (const [name, keys] of Object.entries(BUCKET_MAP)) {
+        const row4 = findRowByPrefix(rows, keys.section4);
+        const row2 = findRowByPrefix(rows, keys.section2);
+        const units = row4 ? getVal(row4, colIdx) : 0;
+        const bps   = row2 ? getVal(row2, colIdx) : 0;
+        if (units > 0 || bps > 0) {
+          buckets[name] = { units, bps };
+        }
+      }
+
+      const sortedBuckets = Object.entries(buckets)
+        .sort((a,b) => b[1].bps - a[1].bps || b[1].units - a[1].units);
+
+      return {
+        weekKey,
+        weekLabel,
+        colIdx,
+        deaVolume,
+        totalBPS,
+        totalMisses: sortedBuckets.reduce((s,[,v]) => s + v.units, 0),
+        sortedBuckets,
+      };
+    });
+
+    return {
+      fileType: 'monthly',
+      weeksData,
+      availableWeeks: weekCols.map(w => w.weekKey),
+    };
+  }
+
+  // ── Main parse entry point ──
+  function parse(arrayBuffer) {
+    const wb = XLSX.read(arrayBuffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    const fileType = detectFileType(rows);
+    if (fileType === 'monthly') return parseMonthly(rows);
+    return parseWeekly(rows);
   }
 
   return { parse };
