@@ -1,32 +1,63 @@
-// ── Storage (localStorage - works offline, easy to migrate to cloud) ──
+// ── Storage (Firebase Realtime Database - shared across all users) ──
 const Storage = (() => {
-  const KEY = 'dea_weekly_bridges';
+  const DB_URL = "https://dea-bridge-default-rtdb.europe-west1.firebasedatabase.app";
+  const PATH   = "/bridges";
 
-  function getAll() {
-    try {
-      return JSON.parse(localStorage.getItem(KEY)) || [];
-    } catch { return []; }
-  }
-
-  function save(bridge) {
-    const all = getAll();
-    const idx = all.findIndex(b => b.weekKey === bridge.weekKey);
-    if (idx >= 0) {
-      all[idx] = bridge; // overwrite same week
-    } else {
-      all.push(bridge);
+  async function apiCall(method, weekKey, data) {
+    const url = weekKey
+      ? `${DB_URL}${PATH}/${weekKey}.json`
+      : `${DB_URL}${PATH}.json`;
+    const opts = { method };
+    if (data) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(data);
     }
-    all.sort((a, b) => (a.weekKey > b.weekKey ? 1 : -1));
-    localStorage.setItem(KEY, JSON.stringify(all));
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error(`Firebase error: ${res.status}`);
+    return res.json();
   }
 
-  function remove(weekKey) {
-    const all = getAll().filter(b => b.weekKey !== weekKey);
-    localStorage.setItem(KEY, JSON.stringify(all));
+  async function getAll() {
+    try {
+      const data = await apiCall('GET', null, null);
+      if (!data) return [];
+      return Object.values(data).sort((a, b) =>
+        a.weekKey > b.weekKey ? 1 : -1
+      );
+    } catch (e) {
+      console.error('Failed to load bridges:', e);
+      return [];
+    }
   }
 
-  function getByKey(weekKey) {
-    return getAll().find(b => b.weekKey === weekKey) || null;
+  async function save(bridge) {
+    try {
+      await apiCall('PUT', bridge.weekKey, bridge);
+      return true;
+    } catch (e) {
+      console.error('Failed to save bridge:', e);
+      return false;
+    }
+  }
+
+  async function remove(weekKey) {
+    try {
+      await apiCall('DELETE', weekKey, null);
+      return true;
+    } catch (e) {
+      console.error('Failed to delete bridge:', e);
+      return false;
+    }
+  }
+
+  async function getByKey(weekKey) {
+    try {
+      const data = await apiCall('GET', weekKey, null);
+      return data || null;
+    } catch (e) {
+      console.error('Failed to get bridge:', e);
+      return null;
+    }
   }
 
   return { getAll, save, remove, getByKey };
