@@ -1,7 +1,7 @@
 // ── Word (.docx) Exporter ──
 const DocxExport = (() => {
-  const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Table,
-          TableRow, TableCell, WidthType, BorderStyle, Packer } = docx;
+  const { Document, Paragraph, TextRun, Table, TableRow, TableCell,
+          WidthType, Packer } = docx;
 
   function bold(text, size) {
     return new TextRun({ text: String(text), bold: true, size: size || 22 });
@@ -12,14 +12,12 @@ const DocxExport = (() => {
   function br() {
     return new Paragraph({ children: [new TextRun('')] });
   }
-
   function sectionHeading(text) {
     return new Paragraph({
       children: [bold(text, 26)],
       spacing: { before: 240, after: 100 },
     });
   }
-
   function bulletPara(text) {
     return new Paragraph({
       children: [normal(text, 20)],
@@ -59,25 +57,23 @@ const DocxExport = (() => {
     });
   }
 
-  // ── Weekly RC: organised by highest BPS day first ──
-  function buildWeeklyRCSection(rcData, sortedBuckets, dayLabels, bpsByDay) {
+  // ── Weekly RC: sorted by highest BPS day first ──
+  function buildWeeklyRCSection(rcData, sortedBuckets, dayLabels) {
     const paras = [];
-    const top2  = sortedBuckets.slice(0, 2);
 
-    top2.forEach(([name, data], rcIdx) => {
+    sortedBuckets.slice(0, 2).forEach(([name, data], rcIdx) => {
       paras.push(sectionHeading(`RC${rcIdx + 1}: ${name}`));
 
       const entries = rcData ? (rcData[name] || {}) : {};
 
-      // Build list of days that have RC text, with their BPS value
       const filledDays = [];
       Object.entries(entries).forEach(([dayIdx, text]) => {
         if (!text || !text.trim()) return;
-        const idx     = parseInt(dayIdx);
-        const label   = dayLabels && dayLabels[idx] ? dayLabels[idx] : `Day ${idx + 1}`;
-        const dayBps  = (data.bpsByDay && data.bpsByDay[idx]) ? data.bpsByDay[idx] : 0;
-        const dayUnits = (data.unitsByDay && data.unitsByDay[idx]) ? data.unitsByDay[idx] : 0;
-        filledDays.push({ idx, label, text: text.trim(), bps: dayBps, units: dayUnits });
+        const idx      = parseInt(dayIdx);
+        const label    = dayLabels && dayLabels[idx] ? dayLabels[idx] : `Day ${idx + 1}`;
+        const dayBps   = data.bpsByDay && data.bpsByDay[idx] ? data.bpsByDay[idx] : 0;
+        const dayUnits = data.unitsByDay && data.unitsByDay[idx] ? data.unitsByDay[idx] : 0;
+        filledDays.push({ label, text: text.trim(), bps: dayBps, units: dayUnits });
       });
 
       if (!filledDays.length) {
@@ -89,7 +85,7 @@ const DocxExport = (() => {
         return;
       }
 
-      // Sort by BPS descending (highest impact first)
+      // Sort by BPS descending
       filledDays.sort((a, b) => b.bps - a.bps || b.units - a.units);
 
       filledDays.forEach(({ label, text, units }) => {
@@ -109,36 +105,38 @@ const DocxExport = (() => {
     return paras;
   }
 
-  // ── Monthly RC: organised by highest BPS week first ──
-  function buildMonthlyRCSection(rcData, sortedBuckets, weeksData) {
+  // ── Monthly RC: sorted by highest BPS week first ──
+  // Format: "W27 2026 – [RC text] (33 bps / 1,342 units)"
+  function buildMonthlyRCSection(rcData, sortedBuckets, perWeekBucketData) {
     const paras = [];
-    const top2  = sortedBuckets.slice(0, 2);
 
-    top2.forEach(([name, data], rcIdx) => {
+    sortedBuckets.slice(0, 2).forEach(([name, data], rcIdx) => {
+      // Header shows avg bps and total units for this bucket across all weeks
       paras.push(sectionHeading(`RC${rcIdx + 1}: ${name}`));
+      paras.push(new Paragraph({
+        children: [normal(`avg ${data.bps} bps / ${data.units.toLocaleString()} total units`, 20)],
+        spacing: { after: 100 },
+      }));
 
       const entries = rcData ? (rcData[name] || {}) : {};
 
-      // Build list of weeks that have RC text, with their BPS value
+      // Build entries with per-week BPS and units for this specific bucket
       const filledWeeks = [];
       Object.entries(entries).forEach(([weekKey, text]) => {
         if (!text || !text.trim()) return;
 
-        // Find BPS for this bucket in this week
-        let weekBps   = 0;
-        let weekUnits = 0;
-        let weekLabel = weekKey;
+        // Get the actual BPS and units for THIS bucket in THIS week
+        const weekData  = perWeekBucketData[weekKey];
+        const weekBps   = weekData && weekData[name] ? weekData[name].bps   : 0;
+        const weekUnits = weekData && weekData[name] ? weekData[name].units : 0;
+        const weekLabel = weekData ? weekData._weekLabel : weekKey;
 
-        if (weeksData) {
-          const weekObj = weeksData.find(w => w.weekKey === weekKey);
-          if (weekObj) {
-            weekLabel = weekObj.weekLabel;
-            const wb  = weekObj.sortedBuckets.find(([n]) => n === name);
-            if (wb) { weekBps = wb[1].bps; weekUnits = wb[1].units; }
-          }
-        }
-
-        filledWeeks.push({ weekKey, weekLabel, text: text.trim(), bps: weekBps, units: weekUnits });
+        filledWeeks.push({
+          weekLabel,
+          text: text.trim(),
+          bps:   weekBps,
+          units: weekUnits,
+        });
       });
 
       if (!filledWeeks.length) {
@@ -150,14 +148,15 @@ const DocxExport = (() => {
         return;
       }
 
-      // Sort by BPS descending (highest impact week first)
+      // Sort by BPS descending - highest impacting week first
       filledWeeks.sort((a, b) => b.bps - a.bps || b.units - a.units);
 
-      filledWeeks.forEach(({ weekLabel, text, units, bps }) => {
+      filledWeeks.forEach(({ weekLabel, text, bps, units }) => {
         paras.push(new Paragraph({
           children: [
-            bold(`${weekLabel} (${bps} bps / ${units.toLocaleString()} units) – `, 20),
+            bold(`${weekLabel} – `, 20),
             normal(text, 20),
+            normal(` (${bps} bps / ${units.toLocaleString()} units)`, 20),
           ],
           spacing: { after: 80 },
         }));
@@ -169,21 +168,20 @@ const DocxExport = (() => {
     return paras;
   }
 
+  // ── Export Weekly ──
   async function exportWeekly(bridge) {
     const {
       weekLabel, deaVolume, totalBPS, totalMisses,
-      sortedBuckets, dayLabels, rcData, actionPlan
+      sortedBuckets, dayLabels, rcData, actionPlan,
     } = bridge;
 
     const children = [];
 
-    // Title
     children.push(new Paragraph({
       children: [bold(`DEA ${weekLabel} Summary`, 36)],
       spacing: { after: 160 },
     }));
 
-    // Top stats
     children.push(new Paragraph({
       children: [
         bold(`${totalBPS} bps`, 24),
@@ -195,7 +193,6 @@ const DocxExport = (() => {
       spacing: { after: 200 },
     }));
 
-    // Bucket summary lines
     children.push(sectionHeading('Root Cause Summary'));
     sortedBuckets.forEach(([name, data]) => {
       children.push(new Paragraph({
@@ -208,15 +205,11 @@ const DocxExport = (() => {
     });
     children.push(br());
 
-    // Bucket table
     children.push(buildBucketTable(sortedBuckets, totalMisses));
     children.push(br());
 
-    // RC sections - sorted by highest BPS day first
-    const rcParas = buildWeeklyRCSection(rcData, sortedBuckets, dayLabels);
-    children.push(...rcParas);
+    children.push(...buildWeeklyRCSection(rcData, sortedBuckets, dayLabels));
 
-    // Action Plan
     if (actionPlan && actionPlan.trim()) {
       children.push(sectionHeading('Action Plan'));
       actionPlan.trim().split('\n').filter(l => l.trim()).forEach(line => {
@@ -233,27 +226,16 @@ const DocxExport = (() => {
     triggerDownload(blob, `DEA_${bridge.weekKey}_Bridge.docx`);
   }
 
+  // ── Export Monthly ──
   async function exportMonthly(bridge) {
     const {
       label, weekLabels, weekKeys, totalVolume,
       totalBPSAvg, totalMissesSum, sortedBuckets,
-      rcData, actionPlan
+      rcData, actionPlan, perWeekBucketData,
     } = bridge;
-
-    // Reconstruct weeksData from bridge for BPS lookup
-    // We store weekLabels + weekKeys so we can match RC entries
-    const weeksData = weekKeys.map((key, i) => ({
-      weekKey:   key,
-      weekLabel: weekLabels[i],
-      sortedBuckets: sortedBuckets.map(([name, d]) => {
-        // Try to get per-week data if stored, otherwise use avg
-        return [name, { bps: d.bps, units: 0 }];
-      }),
-    }));
 
     const children = [];
 
-    // Title
     children.push(new Paragraph({
       children: [bold(`Analysis of DEA ${label}`, 36)],
       spacing: { after: 80 },
@@ -263,7 +245,6 @@ const DocxExport = (() => {
       spacing: { after: 200 },
     }));
 
-    // Top stats
     children.push(new Paragraph({
       children: [
         bold(`Avg ${totalBPSAvg} bps`, 24),
@@ -275,7 +256,6 @@ const DocxExport = (() => {
       spacing: { after: 200 },
     }));
 
-    // Bucket summary lines
     children.push(sectionHeading(`Root Cause Analysis (${weekLabels.join(' – ')})`));
     sortedBuckets.forEach(([name, data]) => {
       children.push(new Paragraph({
@@ -288,15 +268,12 @@ const DocxExport = (() => {
     });
     children.push(br());
 
-    // Bucket table
     children.push(buildBucketTable(sortedBuckets, totalMissesSum));
     children.push(br());
 
-    // RC sections - sorted by highest BPS week first
-    const rcParas = buildMonthlyRCSection(rcData, sortedBuckets, weeksData);
-    children.push(...rcParas);
+    // RC section with per-week BPS data
+    children.push(...buildMonthlyRCSection(rcData, sortedBuckets, perWeekBucketData));
 
-    // Action Plan
     if (actionPlan && actionPlan.trim()) {
       children.push(sectionHeading('Action Plan'));
       actionPlan.trim().split('\n').filter(l => l.trim()).forEach(line => {
