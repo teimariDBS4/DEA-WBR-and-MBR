@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DEA Bridge Generator</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header>
+      <div class="header-inner">
+        <div class="logo">📦 DEA Bridge Generator</div>
+        <nav>
+          <button class="nav-btn active" data-tab="weekly">Weekly Bridge</button>
+          <button class="nav-btn" data-tab="monthly">Monthly Bridge</button>
+          <button class="nav-btn" data-tab="saved">Saved Bridges</button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Weekly Tab -->
+    <div id="tab-weekly" class="tab-content active">
+      <div class="container">
+        <h2>Weekly DEA Bridge</h2>
+
+        <!-- Upload Zone -->
+        <div class="upload-zone" id="weekly-drop-zone">
+          <div class="upload-icon">📂</div>
+          <p>Drag & drop your PerfectMile Excel file here</p>
+          <p class="upload-sub">or</p>
+          <label class="btn-primary">
+            Browse File
+            <input type="file" id="weekly-file-input" accept=".xlsx,.xls,.csv" hidden />
+          </label>
+          <p class="upload-hint">Accepts .xlsx / .xls / .csv</p>
+        </div>
+
+        <!-- Parsed Summary -->
+        <div id="weekly-summary" class="card hidden">
+          <div class="card-header">
+            <h3 id="weekly-title">DEA W-- Summary</h3>
+            <span class="badge" id="weekly-week-badge"></span>
+          </div>
+          <div class="stats-row" id="weekly-stats"></div>
+          <div class="bucket-table-wrap">
+            <table id="weekly-bucket-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Bucket</th>
+                  <th>Units</th>
+                  <th>BPS</th>
+                  <th>% of Total Misses</th>
+                </tr>
+              </thead>
+              <tbody id="weekly-bucket-body"></tbody>
+            </table>
+          </div>
+
+          <!-- RC Entry for top 2 buckets -->
+          <div id="weekly-rc-section"></div>
+
+          <!-- Action Plan -->
+          <div class="form-group">
+            <label class="section-label">Action Plan</label>
+            <p class="field-hint">Enter action plan items. Leave blank to omit from output.</p>
+            <textarea id="weekly-action-plan" rows="5" placeholder="AP1) ...&#10;AP2) ..."></textarea>
+          </div>
+
+          <!-- Save + Export -->
+          <div class="btn-row">
+            <button class="btn-primary" id="weekly-save-btn">💾 Save Bridge</button>
+            <button class="btn-secondary" id="weekly-export-btn">📄 Export Word (.docx)</button>
+          </div>
+          <div id="weekly-feedback" class="feedback hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Monthly Tab -->
+    <div id="tab-monthly" class="tab-content hidden">
+      <div class="container">
+        <h2>Monthly DEA Bridge</h2>
+
+        <div class="card">
+          <label class="section-label">Select Saved Weekly Bridges</label>
+          <p class="field-hint">Choose 2–6 consecutive weeks to compile into a monthly bridge.</p>
+          <div id="monthly-week-selector" class="week-selector-grid"></div>
+
+          <div class="form-group" id="monthly-month-group">
+            <label class="section-label">Month / Period Label</label>
+            <input type="text" id="monthly-label" placeholder="e.g. April 2026 or W14 to W17" />
+          </div>
+
+          <!-- RC per week for top 2 buckets -->
+          <div id="monthly-rc-section"></div>
+
+          <!-- Action Plan -->
+          <div class="form-group">
+            <label class="section-label">Action Plan</label>
+            <p class="field-hint">Enter action plan items. Leave blank to omit.</p>
+            <textarea id="monthly-action-plan" rows="5" placeholder="AP1) ...&#10;AP2) ..."></textarea>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn-primary" id="monthly-generate-btn">🔄 Generate Monthly Bridge</button>
+            <button class="btn-secondary hidden" id="monthly-export-btn">📄 Export Word (.docx)</button>
+          </div>
+          <div id="monthly-preview" class="monthly-preview hidden"></div>
+          <div id="monthly-feedback" class="feedback hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved Bridges Tab -->
+    <div id="tab-saved" class="tab-content hidden">
+      <div class="container">
+        <h2>Saved Weekly Bridges</h2>
+        <div id="saved-list" class="saved-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="storage.js"></script>
+  <script src="parser.js"></script>
+  <script src="bridge-generator.js"></script>
+  <script src="docx-export.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
