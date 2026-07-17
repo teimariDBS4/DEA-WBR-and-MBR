@@ -26,7 +26,6 @@
       <div class="container">
         <h2>Weekly DEA Bridge</h2>
 
-        <!-- Upload Zone -->
         <div class="upload-zone" id="weekly-drop-zone">
           <div class="upload-icon">📂</div>
           <p>Drag & drop your PerfectMile Excel file here</p>
@@ -38,7 +37,6 @@
           <p class="upload-hint">Accepts .xlsx / .xls / .csv</p>
         </div>
 
-        <!-- Parsed Summary -->
         <div id="weekly-summary" class="card hidden">
           <div class="card-header">
             <h3 id="weekly-title">DEA W-- Summary</h3>
@@ -59,18 +57,12 @@
               <tbody id="weekly-bucket-body"></tbody>
             </table>
           </div>
-
-          <!-- RC Entry for top 2 buckets -->
           <div id="weekly-rc-section"></div>
-
-          <!-- Action Plan -->
           <div class="form-group">
             <label class="section-label">Action Plan</label>
             <p class="field-hint">Enter action plan items. Leave blank to omit from output.</p>
             <textarea id="weekly-action-plan" rows="5" placeholder="AP1) ...&#10;AP2) ..."></textarea>
           </div>
-
-          <!-- Save + Export -->
           <div class="btn-row">
             <button class="btn-primary" id="weekly-save-btn">💾 Save Bridge</button>
             <button class="btn-secondary" id="weekly-export-btn">📄 Export Word (.docx)</button>
@@ -87,9 +79,45 @@
         <h2>Monthly DEA Bridge</h2>
 
         <div class="card">
-          <label class="section-label">Select Saved Weekly Bridges</label>
-          <p class="field-hint">Choose 2–6 consecutive weeks to compile into a monthly bridge.</p>
-          <div id="monthly-week-selector" class="week-selector-grid"></div>
+          <label class="section-label">Upload Weekly Excel Files</label>
+          <p class="field-hint">Upload 2 to 6 weekly PerfectMile Excel files at once. The app will process each one and compile the monthly bridge automatically.</p>
+
+          <!-- Multi-file upload zone -->
+          <div class="upload-zone" id="monthly-drop-zone">
+            <div class="upload-icon">📂</div>
+            <p>Drag & drop multiple weekly Excel files here</p>
+            <p class="upload-sub">or</p>
+            <label class="btn-primary">
+              Browse Files
+              <input type="file" id="monthly-file-input" accept=".xlsx,.xls,.csv" multiple hidden />
+            </label>
+            <p class="upload-hint">Select 2–6 files at once · Accepts .xlsx / .xls / .csv</p>
+          </div>
+
+          <!-- Uploaded files list -->
+          <div id="monthly-files-list" class="hidden">
+            <label class="section-label">Files Loaded</label>
+            <div id="monthly-files-chips" class="week-selector-grid" style="margin-bottom:20px;"></div>
+          </div>
+
+          <!-- Compiled stats preview -->
+          <div id="monthly-stats-preview" class="hidden">
+            <div class="stats-row" id="monthly-stats"></div>
+            <div class="bucket-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Bucket</th>
+                    <th>Total Units</th>
+                    <th>Avg BPS</th>
+                    <th>% of Misses</th>
+                  </tr>
+                </thead>
+                <tbody id="monthly-bucket-body"></tbody>
+              </table>
+            </div>
+          </div>
 
           <div class="form-group" id="monthly-month-group">
             <label class="section-label">Month / Period Label</label>
@@ -107,10 +135,9 @@
           </div>
 
           <div class="btn-row">
-            <button class="btn-primary" id="monthly-generate-btn">🔄 Generate Monthly Bridge</button>
+            <button class="btn-primary hidden" id="monthly-generate-btn">🔄 Generate Monthly Bridge</button>
             <button class="btn-secondary hidden" id="monthly-export-btn">📄 Export Word (.docx)</button>
           </div>
-          <div id="monthly-preview" class="monthly-preview hidden"></div>
           <div id="monthly-feedback" class="feedback hidden"></div>
         </div>
 
@@ -127,7 +154,6 @@
 
   </div>
 
-  <!-- Scripts in correct order -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
   <script src="firebase-config.js"></script>
