@@ -39,7 +39,8 @@
       try {
         const parsed = Parser.parse(e.target.result);
         if (parsed.fileType === 'monthly') {
-          showFeedback('weekly-feedback', 'error', 'This looks like a monthly file. Please use the Monthly Bridge tab.');
+          showFeedback('weekly-feedback', 'error',
+            'This looks like a monthly file. Please use the Monthly Bridge tab.');
           return;
         }
         currentParsed = parsed;
@@ -58,15 +59,25 @@
     document.getElementById('weekly-week-badge').textContent = data.weekKey;
 
     document.getElementById('weekly-stats').innerHTML = `
-      <div class="stat-box"><div class="stat-value">${data.totalBPS} bps</div><div class="stat-label">Total DEA BPS</div></div>
-      <div class="stat-box"><div class="stat-value">${data.deaVolume.toLocaleString()}</div><div class="stat-label">DEA Volume (units)</div></div>
-      <div class="stat-box"><div class="stat-value">${data.totalMisses.toLocaleString()}</div><div class="stat-label">Impacting Units</div></div>
+      <div class="stat-box">
+        <div class="stat-value">${data.totalBPS} bps</div>
+        <div class="stat-label">Total DEA BPS</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${data.deaVolume.toLocaleString()}</div>
+        <div class="stat-label">DEA Volume (units)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${data.totalMisses.toLocaleString()}</div>
+        <div class="stat-label">Impacting Units</div>
+      </div>
     `;
 
     const tbody = document.getElementById('weekly-bucket-body');
     tbody.innerHTML = '';
     data.sortedBuckets.forEach(([name, d], i) => {
-      const pct = data.totalMisses > 0 ? ((d.units / data.totalMisses) * 100).toFixed(1) : '0';
+      const pct      = data.totalMisses > 0
+        ? ((d.units / data.totalMisses) * 100).toFixed(1) : '0';
       const topBadge = i < 2 ? `<span class="top-badge">RC${i+1}</span>` : '';
       tbody.innerHTML += `
         <tr>
@@ -213,16 +224,15 @@
       return;
     }
 
-    // Fetch all saved bridges to auto-fill RC
     const savedBridges = await Storage.getAll();
     renderMonthlyPreview(selectedWeeks, savedBridges);
   });
 
-  // ── MONTHLY: Render Preview with auto-filled RC ──
+  // ── MONTHLY: Render Preview ──
   async function renderMonthlyPreview(selectedWeeks, savedBridges) {
     const compiled = BridgeGenerator.compileMonthlyStats(selectedWeeks);
 
-    // Stats row
+    // Stats
     document.getElementById('monthly-stats').innerHTML = `
       <div class="stat-box">
         <div class="stat-value">${compiled.totalBPSAvg} bps</div>
@@ -246,7 +256,7 @@
     const tbody = document.getElementById('monthly-bucket-body');
     tbody.innerHTML = '';
     compiled.sortedBuckets.forEach(([name, d], i) => {
-      const pct = compiled.totalMissesSum > 0
+      const pct      = compiled.totalMissesSum > 0
         ? ((d.units / compiled.totalMissesSum) * 100).toFixed(1) : '0';
       const topBadge = i < 2 ? `<span class="top-badge">RC${i+1}</span>` : '';
       tbody.innerHTML += `
@@ -271,7 +281,7 @@
       selectedWeeks, compiled.sortedBuckets, savedBridges
     );
 
-    // Build RC blocks
+    // Build RC blocks - sorted by highest BPS descending for each bucket
     const rcSection = document.getElementById('monthly-rc-section');
     rcSection.innerHTML = '';
 
@@ -297,28 +307,32 @@
           </span>
         </h4>
         <p class="rc-sub">
-          Auto-filled from saved weekly bridges where available.
+          Ordered by highest impact first.
           Highest impacting week: <strong>${highestWeek || 'N/A'}</strong>.
-          Edit any field as needed or leave blank to omit.
+          Auto-filled from saved bridges where available. Edit as needed.
         </p>
       `;
 
-      selectedWeeks.forEach(week => {
-        const wb     = week.sortedBuckets.find(([n]) => n === name);
-        const wUnits = wb ? wb[1].units.toLocaleString() : '0';
-        const wBps   = wb ? wb[1].bps : 0;
+      // Sort weeks by BPS for THIS bucket descending
+      const sortedWeeks = [...selectedWeeks].sort((a, b) => {
+        const aBps = (a.sortedBuckets.find(([n]) => n === name) || [, { bps: 0 }])[1].bps;
+        const bBps = (b.sortedBuckets.find(([n]) => n === name) || [, { bps: 0 }])[1].bps;
+        return bBps - aBps;
+      });
 
-        // Check if we have saved RC for this week
-        const savedText   = (autoRC[name] && autoRC[name][week.weekKey]) || '';
-        const hasSaved    = savedText.trim().length > 0;
-        const isHighlight = week.weekLabel === highestWeek;
+      sortedWeeks.forEach(week => {
+        const wb        = week.sortedBuckets.find(([n]) => n === name);
+        const wUnits    = wb ? wb[1].units.toLocaleString() : '0';
+        const wBps      = wb ? wb[1].bps : 0;
+        const savedText = (autoRC[name] && autoRC[name][week.weekKey]) || '';
+        const hasSaved  = savedText.trim().length > 0;
+        const isHighest = week.weekLabel === highestWeek;
 
         const row = document.createElement('div');
         row.className = 'week-rc-row';
-
         row.innerHTML = `
           <label>
-            ${isHighlight ? '⭐ ' : ''}${week.weekLabel}
+            ${isHighest ? '⭐ ' : ''}${week.weekLabel}
             – ${wUnits} units (${wBps} bps)
             ${hasSaved ? '<span class="auto-filled-badge">auto-filled</span>' : ''}
           </label>
@@ -335,9 +349,7 @@
       rcSection.appendChild(block);
     });
 
-    // Store selected weeks
     currentMonthlyData._selectedWeeks = selectedWeeks;
-
     document.getElementById('monthly-preview-section').classList.remove('hidden');
     document.getElementById('monthly-generate-btn').classList.remove('hidden');
   }
@@ -393,7 +405,7 @@
       const card  = document.createElement('div');
       card.className = 'saved-card';
       const saved = new Date(bridge.savedAt).toLocaleDateString('en-GB',
-        { day:'numeric', month:'short', year:'numeric' });
+        { day: 'numeric', month: 'short', year: 'numeric' });
       card.innerHTML = `
         <div class="saved-card-info">
           <h4>DEA ${bridge.weekLabel}</h4>
